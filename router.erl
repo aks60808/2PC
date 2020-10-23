@@ -7,7 +7,7 @@
 start(RouterName) ->
   Table = ets:new(routing_table,[]),
   spawn(fun()-> process(RouterName,Table) end).
-
+  
 
 
 process(RouterName,Table)->
@@ -23,13 +23,16 @@ process(RouterName,Table)->
       process(RouterName,Table);
     {control, From, Pid, SeqNum, ControlFun} when From == Pid ->
       % I am a root router
-      Children = ControlFun(Name,Table),
+      Children = ControlFun(RouterName,Table),
       % eventually send to controller
       Pid ! {committed,self(),SeqNum},
       % or
       Pid ! {abort,self(),SeqNum},
       ok;
-    {control, From, Pid, SeqNum, ControlFun} -> ok;
+    {control, From, Pid, SeqNum, ControlFun} -> 
+      Children = ControlFun(Name,Table),
+      
+      ok;
     {dump,From} ->
       Dump = ets:match(Table,'$1'),
       From ! {table,self(),Dump},
