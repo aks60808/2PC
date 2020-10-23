@@ -33,3 +33,8 @@ nodeSpawn([First|Rest]) ->
   ControlFun = hello_world,
   NodePid ! {control, self(), self(), 0,ControlFun},
   nodeSpawn(Rest).
+listener() ->
+  %% receive the trace receipt from DestNode
+    receive
+      {trace, Dest, Tracelist} -> ok
+    end.
