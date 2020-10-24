@@ -12,6 +12,10 @@ start(RouterName) ->
 
 process(RouterName,Table)->
   receive
+    {hello,From,Content} -> 
+      io:format(" ~w recived ~p from ~w~n",[RouterName,Content,From]),
+      
+      process(RouterName,Table);
     % DestNode receive the message
     {message, Dest, From,Pid,Trace} when Dest == RouterName ->
       % send controller the receipt
