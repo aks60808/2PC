@@ -1,12 +1,12 @@
 -module(controller).
 -import(router,[start/1]).
+-import(lists,[append/2]).
+-import(ets,[new/2,delete/1,insert/2]).
 -author("tommy").
 
 %% API
 -export([test/0,genGraph/0,graphToNetwork/1]).
-test()->
-  G = genGraph(),
-  graphToNetwork(G).
+
 genGraph() ->
   [{red  , [{white, [white, green]},
     {blue , [blue]}]},
@@ -15,26 +15,44 @@ genGraph() ->
     {blue , [{green, [white, green, red]}]},
     {green, [{red, [red, blue, white]}]}
   ].
+  
+  
+test()->
+  G = genGraph(),
+  graphToNetwork(G).
+
 graphToNetwork(Graph) ->
   io:format("graph is ~w~n",[Graph]),
-  nodeSpawn(Graph).
+  Node_Table = ets:new(node_table,[]),
+  nodeSpawn(Graph,Node_Table).
 
-edgeIterate([])->ok;
-edgeIterate([First|Rest])->
-  {Edge,Names} = First,
-  io:format("Edge is ~w~n",[Edge]).
 
-nodeSpawn([]) -> ok;
-nodeSpawn([First|Rest]) ->
+
+nodeSpawn([],Node_Table) -> 
+  % ets:i(Node_Table),
+  % ets:delete(Node_Table),
+  ok;
+nodeSpawn([First|Rest],Node_Table) ->
   {NodeName,Edges} = First,
   io:format("Node is ~w~n",[NodeName]),
   NodePid = router:start(NodeName),
-  edgeIterate(Edges),
-  ControlFun = hello_world,
-  NodePid ! {control, self(), self(), 0,ControlFun},
-  nodeSpawn(Rest).
-listener() ->
-  %% receive the trace receipt from DestNode
-    receive
-      {trace, Dest, Tracelist} -> ok
-    end.
+  ets:insert(Node_Table,{NodeName,NodePid}),
+  edgeIterate(Edges).
+  % NodePid ! {control, self(), self(), 0,ControlFun},
+  % nodeSpawn(Rest,Node_Table).
+  
+edgeIterate([])->ok;
+edgeIterate([First|Rest])->
+  {Edge,Names} = First, 
+  io:format("Edge is ~w~n",[First]),
+  ListOfLables = register_label_list(Names,Edge,[]),
+  io:format(ListOfLables).
+  % edgeIterate(Rest).
+
+register_label_list([],_,ListOfLabels) -> ListOfLabels;  
+register_label_list([FirstLabel|RestLabels],Edge,ListOfLabels) ->
+  io:format(FirstLabel),
+  io:format("~w~n",[ListOfLabels]),
+  New_ListOfLabels = lists:append([FirstLabel],ListOfLabels),
+  io:format("~w~n",[New_ListOfLabels]).
+  % register_label_list(RestLabels,Edge,New_ListOfLabels).

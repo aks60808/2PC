@@ -30,7 +30,7 @@ process(RouterName,Table)->
       Pid ! {abort,self(),SeqNum},
       ok;
     {control, From, Pid, SeqNum, ControlFun} -> 
-      Children = ControlFun(Name,Table),
+      % Children = ControlFun(Name,Table),
       
       ok;
     {dump,From} ->
