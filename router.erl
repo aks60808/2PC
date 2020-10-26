@@ -1,21 +1,17 @@
 -module(router).
 -import(lists,[append/1]).
--import(ets,[new/2]).
+-import(ets,[new/2,insert/2]).
 -export([start/1]).
 
 
 start(RouterName) ->
-  Table = ets:new(routing_table,[]),
+  Table = ets:new(routing_table,[public]),
   spawn(fun()-> process(RouterName,Table) end).
   
 
 
 process(RouterName,Table)->
   receive
-    {hello,From,Content} -> 
-      io:format(" ~w recived ~p from ~w~n",[RouterName,Content,From]),
-      
-      process(RouterName,Table);
     % DestNode receive the message
     {message, Dest, From,Pid,Trace} when Dest == RouterName ->
       % send controller the receipt
@@ -25,18 +21,20 @@ process(RouterName,Table)->
       NewTrace = lists:append(Trace),
       Pid! {message, Dest, self(),Pid,NewTrace},
       process(RouterName,Table);
+    {control, _From, _Pid, SeqNum, ControlFun} when SeqNum == 0-> 
+      ControlFun(RouterName,Table),
+      Obj = ets:match_object(Table,{'$0','$1'}),
+      % io:format("Routing Talbe of ~w : ~p~n",[RouterName,Obj]),
+      ok;
     {control, From, Pid, SeqNum, ControlFun} when From == Pid ->
       % I am a root router
-      Children = ControlFun(RouterName,Table),
+      % Children = ControlFun(RouterName,Table),
       % eventually send to controller
       Pid ! {committed,self(),SeqNum},
       % or
       Pid ! {abort,self(),SeqNum},
       ok;
-    {control, From, Pid, SeqNum, ControlFun} -> 
-      % Children = ControlFun(Name,Table),
-      
-      ok;
+    
     {dump,From} ->
       Dump = ets:match(Table,'$1'),
       From ! {table,self(),Dump},
