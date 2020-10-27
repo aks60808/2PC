@@ -22,9 +22,10 @@ process(RouterName,Table)->
       Pid! {message, Dest, self(),Pid,NewTrace},
       process(RouterName,Table);
     {control, _From, _Pid, SeqNum, ControlFun} when SeqNum == 0-> 
+      % this is for the initial control message
       ControlFun(RouterName,Table),
       Obj = ets:match_object(Table,{'$0','$1'}),
-      % io:format("Routing Talbe of ~w : ~p~n",[RouterName,Obj]),
+      io:format("Routing Talbe of ~w (pid: ~w) : ~p~n",[RouterName,self(),Obj]),
       ok;
     {control, From, Pid, SeqNum, ControlFun} when From == Pid ->
       % I am a root router
@@ -34,7 +35,11 @@ process(RouterName,Table)->
       % or
       Pid ! {abort,self(),SeqNum},
       ok;
-    
+    {control, _From, _Pid, SeqNum, ControlFun} -> 
+      ControlFun(RouterName,Table),
+      Obj = ets:match_object(Table,{'$0','$1'}),
+      % io:format("Routing Talbe of ~w : ~p~n",[RouterName,Obj]),
+      ok;
     {dump,From} ->
       Dump = ets:match(Table,'$1'),
       From ! {table,self(),Dump},
