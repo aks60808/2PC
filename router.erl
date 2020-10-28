@@ -6,7 +6,8 @@
 
 start(RouterName) ->
   Table = ets:new(routing_table,[public]),
-  spawn(fun()-> process(RouterName,Table) end).
+  SpawnPid = spawn(fun()-> process(RouterName,Table) end),
+  SpawnPid.
   
 
 
