@@ -21,7 +21,7 @@ test()->
   G = genGraph(),
   RootPid = graphToNetwork(G),
   io:format("root pid is ~w~n",[RootPid]),
-  extendNetwork (RootPid, 0, red, {black, [{redPid  , [red, green]}, 
+  extendNetwork (RootPid, 1, red, {black, [{redPid  , [red, green]}, 
   {greenPid, [white, blue]}
  ]}).
 % function graphToNetwork(Graph) start
@@ -52,26 +52,23 @@ nodeSpawn([First|Rest],Node_Table,IncomingEdges_Count_Table,Node_List) ->
   NodePid = router:start(NodeName),
   % insert the Node name and its corresponding Pid to Node_Table
   ets:insert(Node_Table,{NodeName,NodePid}),
-  count_edges(Edges,IncomingEdges_Count_Table),
+  lists:foreach( fun (Edge) ->
+    {EdgeToNodeName,_Names} = Edge,
+    Result = ets:lookup(IncomingEdges_Count_Table,EdgeToNodeName),
+    if
+      Result ==[]->
+        ets:insert(IncomingEdges_Count_Table,{EdgeToNodeName,1});
+      true ->
+        ets:update_counter(IncomingEdges_Count_Table, EdgeToNodeName, 1)
+    end,
+    Obj = ets:match_object(IncomingEdges_Count_Table,{'$0','$1'}),
+    io:format("edges table: ~p~n",[Obj]) 
+    end,Edges),
+  % count_edges(Edges,IncomingEdges_Count_Table),
   % continue with Rest iteration
   nodeSpawn(Rest,Node_Table,IncomingEdges_Count_Table,New_Node_List).
 
-count_edges([],_IncomingEdges_Count_Table) -> ok;
-count_edges([First|Rest],IncomingEdges_Count_Table)->
-  {EdgeToNodeName,_Names} = First,
-  Result = ets:lookup(IncomingEdges_Count_Table,EdgeToNodeName),
-  update_edge_table(Result,EdgeToNodeName,IncomingEdges_Count_Table),
-  Obj = ets:match_object(IncomingEdges_Count_Table,{'$0','$1'}),
-  io:format("edges table: ~p~n",[Obj]),
-  count_edges(Rest,IncomingEdges_Count_Table).
-
-update_edge_table(Result,EdgeToNodeName,IncomingEdges_Count_Table) when Result == [] ->
-  ets:insert(IncomingEdges_Count_Table,{EdgeToNodeName,1});
-update_edge_table(_Result,EdgeToNodeName,IncomingEdges_Count_Table) ->
-  ets:update_counter(IncomingEdges_Count_Table, EdgeToNodeName, 1).
-
-
-initial_network_config([],_Node_Table,_IncomingEdges_Count_Table) -> ok;
+initial_network_config([],_Node_Table,_IncomingEdges_Count_Table) -> true;
 initial_network_config([First|Rest],Node_Table,IncomingEdges_Count_Table)->
   {RouterNodeName,Edges} = First, 
   [{_RouterNodeName,RouterNodePid}] = ets:lookup(Node_Table,RouterNodeName),
@@ -107,14 +104,14 @@ extendNetwork (RootPid, SeqNum, From, {NodeName, Edges}) ->
   % get the list of routing entries and list of nodes who need to update its NoInEdge
   {Routing_List,IncomingEdgeNode_List} = get_routing_entries_and_edges_list(Edges,[],[]),
   % send control message to the root router node
-  RootPid ! {control, From, self(), SeqNum, fun (Name,Table) ->
+  RootPid ! {control, self(), self(), SeqNum, fun (Name,Table) ->
     % if the receipient is the node who matched From
     if 
       From == Name -> 
         % Spawn the new node 
         NewSpawnPid = router:start(NodeName),
         % Send to new node for configuring its routing table
-        NewSpawnPid ! {control,From,self(),SeqNum, fun (_SpawnedNodeName,SpawnedNodeTable) ->
+        NewSpawnPid ! {control,From,self(),0, fun (_SpawnedNodeName,SpawnedNodeTable) ->
           ets:insert(SpawnedNodeTable,{'$NoInEdges',1}),
           ets:insert(SpawnedNodeTable,Routing_List),
         []
@@ -133,7 +130,8 @@ extendNetwork (RootPid, SeqNum, From, {NodeName, Edges}) ->
     NeedUpdateNoInEdge = lists:member(self(), IncomingEdgeNode_List),
     if
       NeedUpdateNoInEdge == true ->  
-        ets:update_counter(Table,'$NoInEdges' , 1)
+        ets:update_counter(Table,'$NoInEdges' , 1);
+      true -> ok
     end,
     []end},
   io:format("routing table is ~p~n",[Routing_List]),
