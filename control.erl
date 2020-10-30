@@ -1,32 +1,17 @@
--module(controller).
+-module(control).
 -import(router,[start/1]).
 -import(lists,[append/2,last/1]).
 -import(ets,[new/2,delete/1,insert/2]).
 -author("tommy").
 
 %% API
--export([test/0,genGraph/0,graphToNetwork/1]).
+-export([extendNetwork/4,graphToNetwork/1]).
 
-genGraph() ->
-  [{red  , [{white, [white, green]},
-    {blue , [blue]}]},
-    {white, [{red, [blue]},
-      {blue, [green, red]}]},
-    {blue , [{green, [white, green, red]}]},
-    {green, [{red, [red, blue, white]}]}
-  ].
-  
-  
-test()->
-  G = genGraph(),
-  RootPid = graphToNetwork(G),
-  io:format("root pid is ~w~n",[RootPid]),
-  extendNetwork (RootPid, 1, red, {black, [{redPid  , [red, green]}, 
-  {greenPid, [white, blue]}
- ]}).
+
+
 % function graphToNetwork(Graph) start
 graphToNetwork(Graph) ->
-  io:format("graph is ~w~n",[Graph]),
+  % io:format("graph is ~w~n",[Graph]),
   Node_Table = ets:new(node_table,[]),
   IncomingEdges_Count_Table = ets:new(edges_table,[]),
   RootPid = nodeSpawn(Graph,Node_Table,IncomingEdges_Count_Table,[]),
@@ -60,9 +45,9 @@ nodeSpawn([First|Rest],Node_Table,IncomingEdges_Count_Table,Node_List) ->
         ets:insert(IncomingEdges_Count_Table,{EdgeToNodeName,1});
       true ->
         ets:update_counter(IncomingEdges_Count_Table, EdgeToNodeName, 1)
-    end,
-    Obj = ets:match_object(IncomingEdges_Count_Table,{'$0','$1'}),
-    io:format("edges table: ~p~n",[Obj]) 
+    end
+    % Obj = ets:match_object(IncomingEdges_Count_Table,{'$0','$1'}),
+    % io:format("edges table: ~p~n",[Obj]) 
     end,Edges),
   % count_edges(Edges,IncomingEdges_Count_Table),
   % continue with Rest iteration
@@ -134,8 +119,8 @@ extendNetwork (RootPid, SeqNum, From, {NodeName, Edges}) ->
       true -> ok
     end,
     []end},
-  io:format("routing table is ~p~n",[Routing_List]),
-  io:format("InEdgeNode list  is ~p~n",[IncomingEdgeNode_List]),
+  % io:format("routing table is ~p~n",[Routing_List]),
+  % io:format("InEdgeNode list  is ~p~n",[IncomingEdgeNode_List]),
 
   ok.
 
