@@ -13,6 +13,13 @@ start(RouterName) ->
 
 process(RouterName,Table,Cur_SeqNum)->
   receive
+    {can_you_commit,DestNodeName,FromPid,FromNodeName} when DestNodeName == RouterName->
+      From ! {i_can_commit,FromNodeName,slef()},
+      process(RouterName,Table,Cur_SeqNum);
+    {can_you_commit,DestNodeName,FromPid,FromNodeName} ->
+      [{_DestNodeName,RouterPid}] = ets:lookup(Table,DestNodeName),
+      RouterPid !  {can_you_commit,DestNodeName,FromPid,FromNodeName},
+      process(RouterName,Table,Cur_SeqNum);
     % DestNode receive the message
     % {message, Dest, From,Pid,Trace} when Dest == RouterName ->
     %   % send controller the receipt
@@ -33,10 +40,13 @@ process(RouterName,Table,Cur_SeqNum)->
       % I am a root router
       % ask all nodes can commit or not
       ListofEntries = ets:match_object(Table,{'$0','$1'}),
-      send_msg_to_all_nodes(ListofEntries,Pid,RouterName),
-      receive
-      
+      Result = ask_nodes_for_commit(ListofEntries,Pid,RouterName),
+      if
+        Result == timeout ->
+          Pid ! {abort,self(),SeqNum};
+        true -> ok
       end,
+        
       % io:format("Root Node~w : Pid: ~w From: ~w~n",[RouterName,Pid,From]),
       ForwardMessage = {control, self(), Pid, SeqNum, ControlFun},
       
@@ -83,16 +93,15 @@ ask_nodes_for_commit([FirstEntry|RestEntries],ControlPid,RouterName) ->
   {DestNodeName,RouteViaPid} = FirstEntry,
   if
     DestNodeName =/= '$NoInEdges' ->
-      RouteViaPid ! {can_you_commit,DestNodeName,self()};
+      RouteViaPid ! {can_you_commit,DestNodeName,self(),RouterName};
     true -> ok
   end,
   receive
-    {i_can_commit,SendToMe,From} -> yes;
-    {i_cannot_commitm,SendToMe,From} -> no
+    {i_can_commit,_Me,From} when From == DestNodeName -> 
+      ask_nodes_for_commit(RestEntries,ControlPid,RouterName)
   after 5000 ->
             timeout
-  end,
-  ask_nodes_for_commit(RestEntries,ControlPid,RouterName).
+  end.
 
 propagate_control_message([],Final_List,ForwardMessage) -> 
   io:format("forward node have ~p~n",[Final_List]),
