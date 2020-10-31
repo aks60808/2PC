@@ -141,6 +141,8 @@ process(RouterName,Table,Cur_SeqNum,IsIn2PC,MsgQueue,TentativeResult)->
           % eventually send to controller
           Pid ! {committed,self(),SeqNum},
           % finished 2PC
+          AllObj_from_table_now = ets:match_object(Table,{'$0','$1'}),
+          io:format("~p~n",[AllObj_from_table_now]),
           process(RouterName,Table,SeqNum,false,MsgQueue,{})
       end;
       

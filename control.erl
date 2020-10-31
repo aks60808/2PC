@@ -86,25 +86,29 @@ get_list_of_names([FirstName|RestNames],DestPid,ListOfNames) ->
 
 % function extendNetwork (RootPid, SeqNum, From, {NodeName, Edges}) start
 extendNetwork (RootPid, SeqNum, From, {NodeName, Edges}) -> 
+  ControlPid = self(),
   % get the list of routing entries and list of nodes who need to update its NoInEdge
   {Routing_List,IncomingEdgeNode_List} = get_routing_entries_and_edges_list(Edges,[],[]),
   % send control message to the root router node
-  RootPid ! {control, self(), self(), SeqNum, fun (Name,Table) ->
+  RootPid ! {control, self(), ControlPid, SeqNum, fun (Name,Table) ->
     % if the receipient is the node who matched From
     if 
       From == Name -> 
+        
         % Spawn the new node 
         NewSpawnPid = router:start(NodeName),
-        % Send to new node for configuring its routing table
-        NewSpawnPid ! {control,From,self(),0, fun (_SpawnedNodeName,SpawnedNodeTable) ->
+        % % Send to new node for configuring its routing table
+        NewSpawnPid ! {control,self(),ControlPid,0, fun (_SpawnedNodeName,SpawnedNodeTable) ->
           ets:insert(SpawnedNodeTable,{'$NoInEdges',1}),
           ets:insert(SpawnedNodeTable,Routing_List),
-        []
-        end},
+          []
+          end},
+        ReturnValue = [NewSpawnPid],
         % update the From's routing table for this new entry
         ets:insert(Table, {NodeName,NewSpawnPid});
       % other node
       true -> 
+        ReturnValue = [],
         % update the other's routing table for this new entry
         % find which pid forward to the From Node
         [{_FromNodeName,RouterPid}] = ets:lookup(Table,From),
@@ -118,11 +122,12 @@ extendNetwork (RootPid, SeqNum, From, {NodeName, Edges}) ->
         ets:update_counter(Table,'$NoInEdges' , 1);
       true -> ok
     end,
-    []end},
-  % io:format("routing table is ~p~n",[Routing_List]),
-  % io:format("InEdgeNode list  is ~p~n",[IncomingEdgeNode_List]),
-
-  ok.
+    ReturnValue end},
+  receive
+      {committed, RootPid, SeqNum} -> true;
+      {abort    , RootPid, SeqNum} -> false
+   end.
+ 
 
 get_routing_entries_and_edges_list([],ListOfNames,IncomingEdgeNode_List)-> {ListOfNames,IncomingEdgeNode_List};
 get_routing_entries_and_edges_list([FirstEdge|RestEdges],ListOfNames,IncomingEdgeNode_List)-> 
