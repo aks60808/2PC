@@ -1,6 +1,4 @@
 -module(router).
--import(lists,[append/1]).
--import(ets,[new/2,insert/2]).
 -export([start/1]).
 
 

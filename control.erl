@@ -1,7 +1,5 @@
 -module(control).
 -import(router,[start/1]).
--import(lists,[append/2,last/1]).
--import(ets,[new/2,delete/1,insert/2]).
 -author("tommy").
 
 %% API
