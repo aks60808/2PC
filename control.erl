@@ -106,52 +106,56 @@ get_list_of_names([FirstName | RestNames], DestPid,
 % function extendNetwork (RootPid, SeqNum, From, {NodeName, Edges}) start
 extendNetwork(RootPid, SeqNum, From,
 	      {NodeName, Edges}) ->
-    ControlPid = self(),
-    % get the list of routing entries and list of nodes who need to update its NoInEdge
-    {Routing_List, IncomingEdgeNode_List} =
-	get_routing_entries_and_edges_list(Edges, [], []),
-    % send control message to the root router node
-    RootPid !
-      {control, self(), ControlPid, SeqNum,
-       fun (Name, Table) ->
-	       % if the receipient is the node who matched From
-	       if From == Name ->
-		      % Spawn the new node
-		      NewSpawnPid = router:start(NodeName),
-		      % % Send to new node for configuring its routing table
-		      NewSpawnPid !
-			{control, self(), ControlPid, 0,
-			 fun (_SpawnedNodeName, SpawnedNodeTable) ->
-				 ets:insert(SpawnedNodeTable,
-					    {'$NoInEdges', 1}),
-				 ets:insert(SpawnedNodeTable, Routing_List),
-				 []
-			 end},
-		      ReturnValue = [NewSpawnPid],
-		      % update the From's routing table for this new entry
-		      ets:insert(Table, {NodeName, NewSpawnPid});
-		  % other node
-		  true ->
-		      ReturnValue = [],
-		      % update the other's routing table for this new entry
-		      % find which pid forward to the From Node
-		      [{_FromNodeName, RouterPid}] = ets:lookup(Table, From),
-		      % copy RouterPid and update the new entry with that Pid
-		      ets:insert(Table, {NodeName, RouterPid})
-	       end,
-	       % check if receipient has the incoming edge from the new node
-	       NeedUpdateNoInEdge = lists:member(self(),
-						 IncomingEdgeNode_List),
-	       if NeedUpdateNoInEdge == true ->
-		      ets:update_counter(Table, '$NoInEdges', 1);
-		  true -> ok
-	       end,
-	       ReturnValue
-       end},
-    receive
-      {committed, RootPid, SeqNum} -> true;
-      {abort, RootPid, SeqNum} -> false
-    end.
+	if Edges == [] ->
+		false;
+	true ->	
+		ControlPid = self(),
+		% get the list of routing entries and list of nodes who need to update its NoInEdge
+		{Routing_List, IncomingEdgeNode_List} =
+		get_routing_entries_and_edges_list(Edges, [], []),
+		% send control message to the root router node
+		RootPid !
+		{control, self(), ControlPid, SeqNum,
+		fun (Name, Table) ->
+			% if the receipient is the node who matched From
+			if From == Name ->
+				% Spawn the new node
+				NewSpawnPid = router:start(NodeName),
+				% % Send to new node for configuring its routing table
+				NewSpawnPid !
+				{control, self(), ControlPid, 0,
+				fun (_SpawnedNodeName, SpawnedNodeTable) ->
+					ets:insert(SpawnedNodeTable,
+							{'$NoInEdges', 1}),
+					ets:insert(SpawnedNodeTable, Routing_List),
+					[]
+				end},
+				ReturnValue = [NewSpawnPid],
+				% update the From's routing table for this new entry
+				ets:insert(Table, {NodeName, NewSpawnPid});
+			% other node
+			true ->
+				ReturnValue = [],
+				% update the other's routing table for this new entry
+				% find which pid forward to the From Node
+				[{_FromNodeName, RouterPid}] = ets:lookup(Table, From),
+				% copy RouterPid and update the new entry with that Pid
+				ets:insert(Table, {NodeName, RouterPid})
+			end,
+			% check if receipient has the incoming edge from the new node
+			NeedUpdateNoInEdge = lists:member(self(),
+							IncomingEdgeNode_List),
+			if NeedUpdateNoInEdge == true ->
+				ets:update_counter(Table, '$NoInEdges', 1);
+			true -> ok
+			end,
+			ReturnValue
+		end},
+		receive
+			{committed, RootPid, SeqNum} -> true;
+			{abort, RootPid, SeqNum} -> false
+		end
+	end.
 
 get_routing_entries_and_edges_list([], ListOfNames,
 				   IncomingEdgeNode_List) ->
