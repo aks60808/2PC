@@ -1,27 +1,27 @@
 -module(router).
-
+-author("z5219960 Heng-Chuan Lin").
 -export([start/1]).
 
 start(RouterName) ->
     % initialise the Routing Table
     Table = ets:new(routing_table, [public]),
-    % make new node perform the processs().
+    % spawn new node to perform the processs().
     SpawnPid = spawn(fun () ->
                              process(not_yet,RouterName, Table, 0, false, [], {})
                      end),
-    io:format("~w : ~w ~n", [RouterName, SpawnPid]),
+    % return Spawned Pid
     SpawnPid.
 
 % node process
 process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
-    % io:format("~w ~w In2PC: ~w~n",[RouterName,self(),IsIn2PC]),
     % if it's not in 2PC, proceess the queued msgs
     if IsIn2PC =/= true andalso length(MsgQueue) =/= 0 ->
-           % send myself the messages
+           % re-send myself the messages
            lists:foreach(fun (Msg) ->
                                  self() ! Msg
                          end,
                          MsgQueue),
+            % clear the MsgQueue
            process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, [], TentativeResult);
        true ->
            ok
@@ -29,10 +29,9 @@ process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResu
     % listening
     receive
       {message, Dest, From, Pid, Trace} when Dest == RouterName ->
-        % io:format("Dest ~w ~w recv message from ~w~n",[RouterName,self(),From]),
-          % I am the Dest node , cache the message
-          Message = {message, Dest, From, Pid, Trace},
+          % I am the Dest node 
           if IsIn2PC == true -> % if I am in 2PC, queue this msg
+                 Message = {message, Dest, From, Pid, Trace},
                  New_MsgQueue = MsgQueue ++ [Message];
              true -> % if I am not in 2PC , process this message
                  New_Trace = [RouterName] ++ Trace,
@@ -46,12 +45,10 @@ process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResu
           % keep the previous status of IsIn2PC
           process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, New_MsgQueue, TentativeResult);
       {message, Dest, From, Pid, Trace} ->
-        %   io:format("~w ~w recv message to dest ~w from ~w~n",[RouterName,self(),Dest,From]),
           % I am doing the forwarding job
           Message = {message, Dest, From, Pid, Trace},
           if IsIn2PC == true -> % in2PC
                  % Queue this msg
-                %  io:format("~w ~w is in 2PC~n",[RouterName,self()]),
                  New_MsgQueue = MsgQueue ++ [Message];
              true ->     % not in 2PC
                  % update trace
@@ -60,58 +57,55 @@ process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResu
                  [{_DestNodeName, RouterPid}] = ets:lookup(Table, Dest),
                  % send it via routerPID with updated Trace
                  RouterPid ! {message, Dest, self(), Pid, New_Trace},
-                %  io:format("~w ~w forward message to dest ~w via ~w~n",[RouterName,self(),Dest,RouterPid]),
                  % same Queue
                  New_MsgQueue = MsgQueue
           end,
-          % keep the previous status of IsIn2PC
+          % keep the previous status 
           process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, New_MsgQueue, TentativeResult);
-      {can_you_commit, DestNodeName, FromPid, RootNodeName, Trace}
+      {can_you_commit, DestNodeName, _DeliverPid, RootNodeName, Trace}
           when DestNodeName == RouterName ->
-          io:format("~w got canyoucommit from ~w~n", [RouterName, FromPid]),
-        %   io:format("Trace is ~p ~n", [Trace]),
           % I am the DestNode
+          % check the tentative result
           {Children, _TempTable} = TentativeResult,
+          % record the trace from root to me
           [LastPid | Rest] = Trace,
-          RoutingPath = [self()] ++ Trace ,
+          RoutingPath_from_Root_to_Node = [self()] ++ Trace ,
           if Children == abort ->
+                 % send abort msg
                  LastPid ! {i_cannot_commit, RootNodeName, self(), RouterName, Rest};
              true ->
-                 LastPid ! {i_can_commit, RootNodeName, self(), RouterName, Rest,RoutingPath}
+                 % send can commit msg with routing path
+                 LastPid ! {i_can_commit, RootNodeName, self(), RouterName, Rest,RoutingPath_from_Root_to_Node}
           end,
-          
           % keep the status ( now should be in 2PC)
           process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue,TentativeResult);
-      {can_you_commit, DestNodeName, _FromPid, RootNodeName, Trace} ->
+      {can_you_commit, DestNodeName, _DeliverPid, RootNodeName, Trace} ->
           % this is not for me -> find which node should take care of it
           [{_DestNodeName, RouterPid}] = ets:lookup(Table, DestNodeName),
           % forward
           New_Trace = [self()] ++ Trace,
           RouterPid ! {can_you_commit, DestNodeName, self(), RootNodeName, New_Trace},
-          io:format("~w ~w foward can you commit to ~w via ~w~n",
-                    [RouterName, self(), DestNodeName, RouterPid]),
-          % only forward this cancommit request so Im not in 2PC
           process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult);
-      {i_can_commit, RootNodeName, _FromPid, FromNodeName, Trace,RoutingPath} ->
-          io:format("~w got i can commit of ~w ~n", [RouterName, FromNodeName]),
+      {i_can_commit, RootNodeName, _DeliverPid, FromNodeName, Trace,RoutingPath} ->
           % forward canCommit to rootnode
+          % send to root in opposite direction
           [NextPid | Rest] = Trace,
           NextPid ! {i_can_commit, RootNodeName, self(), FromNodeName, Rest,RoutingPath},
           process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult);
-      {i_cannot_commit, RootNodeName, _FromPid, FromNodeName, Trace} ->
+      {i_cannot_commit, RootNodeName, _DeliverPid, FromNodeName, Trace} ->
+          % send to root in opposite direction
           [NextPid | Rest] = Trace,
           NextPid ! {i_cannot_commit, RootNodeName, self(), FromNodeName, Rest},
           process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult);
-      % DestNode receive the message
       {control, _From, _Pid, SeqNum, ControlFun} when SeqNum == 0 ->
           % this is for the initial control message
           ControlFun(RouterName, Table),
           % children will be [] ,nothing spawned
           % not in 2PC !!
-          Obj = ets:match_object(Table, {'$0', '$1'}),
-        %   io:format("routing table of ~w ~w : ~p~n", [RouterName, self(), Obj]),
           process(RootNode,RouterName, Table, SeqNum, false, MsgQueue, TentativeResult);
       {control, From, Pid, SeqNum, ControlFun} when From == Pid ->
+          % hanlding simultaneously control request
+          % if SeqNum smaller than current one -> abort
           if 
             Cur_SeqNum > SeqNum orelse Cur_SeqNum == SeqNum->
                 Pid ! {abort, self(), SeqNum},
@@ -122,17 +116,26 @@ process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResu
           % ask all nodes can commit or not
           ListofEntries = ets:match_object(Table, {'$0', '$1'}),
           ControlMessage = {control, self(), Pid, SeqNum, ControlFun},
+          % Create a Temp Routing Table
           TempTable = ets:new(temp_routing_table, [public]),
+          % Copy all Objs from Routing Table
           AllObj = ets:match_object(Table, {'$0', '$1'}),
+          % insert these obj to Temp Table
           ets:insert(TempTable, AllObj),
+          % perform the control funciton with TempTable
           Children = ControlFun(RouterName, TempTable),
+          % propagate this control request to all nodes
           propagate_control_message(ListofEntries, [], ControlMessage),
+          % create a Table holding the Path from each node for temporary use
           RoutingPath_Table = ets:new(routing_path_table,[]),
+          % ask all node to prepare for commit
           Result = ask_nodes_for_commit(ListofEntries, RouterName,RoutingPath_Table),
-        %   io:format("result is ~w~n", [Result]),
           if Result == timeout orelse Result == abort orelse Children == abort ->
+                % if abort or timeout -> send do Abort
                  send_2nd_phase_msg(ListofEntries, SeqNum, RouterName, doAbort,RoutingPath_Table),
+                 % clean the tentative result of root node
                  if is_list(Children) == true ->
+                        % terminate the spawned node
                         lists:foreach(fun (NodePid) ->
                                               exit(NodePid, abort)
                                       end,
@@ -140,10 +143,10 @@ process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResu
                     true -> % this is typically abort
                         ok
                  end,
+                 % de-allocate the Temp Routing Table
                  ets:delete(TempTable),
+                 % send abort to controller
                  Pid ! {abort, self(), SeqNum},
-                 Obj_after_abort = ets:match_object(Table, {'$0', '$1'}),
-                %  io:format("~w after abort is ~p~n", [RouterName,Obj_after_abort]),
                  % terminate the 2PC
                  process(RouterName,RouterName, Table, Cur_SeqNum, false, MsgQueue, {});
              true ->
@@ -183,7 +186,7 @@ process(RootNode,RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResu
                                        io:format("NewSpawnedNode ~w alive? ~w~n",[NodePid,is_process_alive(NodePid)])
                                end,
                                Children);
-             true -> % this is typically abort
+             true -> % this is == abort
                  ok
           end,
           ets:delete(TempTable),
