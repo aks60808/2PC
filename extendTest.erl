@@ -33,7 +33,7 @@ runTest () ->
   io:format ("*** Starting router network...~n"),
   Graph = simpleNetworkGraph (),
   RedPid = control:graphToNetwork (Graph),
-  networkTest:verifyNetwork (RedPid, Graph),
+  % networkTest:verifyNetwork (RedPid, Graph),
 
   {WhitePid, _} = networkTest:probeNetwork (RedPid, white),
   {BluePid , _} = networkTest:probeNetwork (RedPid, blue ),

@@ -24,7 +24,7 @@ runTest () ->
   io:format ("*** Starting router network...~n"),
   CGraph = circularNetwork3 (),
   RedPid = control:graphToNetwork (CGraph),
-  networkTest:verifyNetwork (RedPid, CGraph),
+  % networkTest:verifyNetwork (RedPid, CGraph),
 
   {WhitePid, _} = networkTest:probeNetwork (RedPid, white),
   {BluePid , _} = networkTest:probeNetwork (RedPid, blue ),
@@ -52,5 +52,6 @@ runTest () ->
       io:format ("*** ERROR: Re-configuration failed!~n")
   after 10000              ->
       io:format ("*** ERROR: Re-configuration timed out!~n")
-  end,
-  networkTest:verifyNetwork (RedPid, reverseCircularNetwork3 ()).
+  end.
+  % networkTest:verifyNetwork (RedPid, reverseCircularNetwork3 ()).
+  

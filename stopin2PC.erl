@@ -38,7 +38,8 @@ runTest () ->
 	    fun (Name, Table) -> 
 		case Name of
 		  red   -> ets:insert (Table, [{white, BluePid }, 
-					       {blue , BluePid }]);
+                 {blue , BluePid }]),
+                 timer:sleep(1000);
 		  white -> ets:insert (Table, [{red  , RedPid  }, 
 					       {blue , RedPid  }]);
 		  blue  -> ets:insert (Table, [{red  , WhitePid}, 
@@ -47,7 +48,7 @@ runTest () ->
 		[]
         end},
     % make sure the control requests are propagated, i.e everynode is in 2PC 
-    timer:sleep(1000),
+    timer:sleep(2000),
     RedPid ! stop,
     BluePid ! stop,
   receive
