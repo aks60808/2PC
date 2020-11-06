@@ -52,6 +52,6 @@ runTest () ->
       io:format ("*** ERROR: Re-configuration failed!~n")
   after 10000              ->
       io:format ("*** ERROR: Re-configuration timed out!~n")
-  end.
-  % networkTest:verifyNetwork (RedPid, reverseCircularNetwork3 ()).
+  end,
+  networkTest:verifyNetwork (RedPid, reverseCircularNetwork3 ()).
   
