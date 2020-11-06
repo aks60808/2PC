@@ -239,7 +239,6 @@ graphToNetwork(Graph) ->
             inserting the sets of {Dest,RoutePid},{NoInEdge,int}.
 
 extendNetwork(RootPid, SeqNum, From, {NodeName, Edges}) ->
-    if Edges is [] will directly return false
     obtain {Routing_List, IncomingEdgeNode_List} by calling 
         get_routing_entries_and_edges_list(Edges,_temp_container_1,_temp_container_2)
     Data structure in use:
