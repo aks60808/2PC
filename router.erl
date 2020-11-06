@@ -120,9 +120,9 @@ process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
                          MsgQueue,
                          TentativeResult)
           end;
-      {can_you_commit, DestNodeName, _DeliverPid, RootNodeName, Trace}
+      {can_you_commit,SeqNum,DestNodeName, _DeliverPid, RootNodeName, Trace}
           when DestNodeName == RouterName -> % I am the DestNode
-          if IsIn2PC == true ->
+          if IsIn2PC == true andalso Cur_SeqNum == SeqNum->
                  % check the tentative result
                  {Children, _TempTable, _PreviousSeqNum} = TentativeResult,
                  % send it in opposite order
@@ -134,16 +134,20 @@ process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
                         % send can commit msg backward
                         LastPid ! {i_can_commit, RootNodeName, self(), RouterName, Rest}
                  end;
+              IsIn2PC == true andalso Cur_SeqNum =/= SeqNum ->
+                 % handling conflicting control request 
+                [LastPid | Rest] = Trace,
+                LastPid ! {i_cannot_commit, RootNodeName, self(), RouterName, Rest};
              true ->
                  ok % if current state is not in 2PC -> ignore it
           end,
           process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult);
-      {can_you_commit, DestNodeName, _DeliverPid, RootNodeName, Trace} ->
+      {can_you_commit,SeqNum, DestNodeName, _DeliverPid, RootNodeName, Trace} ->
           % this is not for me -> find which node should take care of it
           [{_DestNodeName, RouterPid}] = ets:lookup(Table, DestNodeName),
           % forward and add the trace for backward sending
           New_Trace = [self()] ++ Trace,
-          RouterPid ! {can_you_commit, DestNodeName, self(), RootNodeName, New_Trace},
+          RouterPid ! {can_you_commit,SeqNum, DestNodeName, self(), RootNodeName, New_Trace},
           process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult);
       {i_can_commit, RootNodeName, _DeliverPid, FromNodeName, Trace} ->
           % forward canCommit to rootnode
@@ -182,9 +186,9 @@ process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
              true ->
                  ok
           end,
-          % hanlding simultaneously control request if current Seq is equal to or larger than this Control Seq
+          % hanlding simultaneously control request if current Seq is equal to this Control Seq
           % For root node,smaller Seq and dupilcate (same as current seqnum) are not allowed
-          if Cur_SeqNum > SeqNum orelse Cur_SeqNum == SeqNum ->
+          if Cur_SeqNum == SeqNum ->
                  Pid ! {abort, self(), SeqNum},
                  process(RouterName, Table, Cur_SeqNum, false, MsgQueue, TentativeResult);
              true ->
@@ -205,9 +209,7 @@ process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
           % propagate this control request to all nodes
           propagate_message(ListofEntries, [], ControlMessage, From, self()),
           % ask all node to prepare for commit
-          Result = ask_nodes_for_commit(ListofEntries, RouterName),
-          % clean propagated control msg
-          flush(),
+          Result = ask_nodes_for_commit(ListofEntries, SeqNum,RouterName),
           % check the result from first phase
           if Result == timeout orelse Result == abort orelse Children == abort ->
                  % if abort or timeout -> send do Abort
@@ -232,8 +234,7 @@ process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
                  % send abort to controller
                  Pid ! {abort, self(), SeqNum},
                  % complete the 2PC
-                 % clean the mail box
-                 flush(),
+
                  process(RouterName, Table, Cur_SeqNum, false, MsgQueue, {});
              true ->
                  % propagate doCommit msg through outgoing edge
@@ -250,8 +251,6 @@ process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
                  ets:delete(TempTable),
                  % eventually send to controller
                  Pid ! {committed, self(), SeqNum},
-                 % clean the mail box
-                 flush(),
                  % finished 2PC
                  process(RouterName, Table, SeqNum, false, MsgQueue, {})
           end;
@@ -281,7 +280,17 @@ process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
              % case 2: conflicting with two conrtol msg conflict -> rollback the (larger) current one then do the smaller one
              Cur_SeqNum > SeqNum andalso IsIn2PC == true ->
                  % this is the result of current control msg one
-                 {_PreChildren, Pre_TempTable, _Previous_SeqNum} = TentativeResult,
+                 % abort here
+                 {PreChildren, Pre_TempTable, Previous_SeqNum} = TentativeResult,
+                 if is_list(PreChildren) == true ->
+                        % terminate spawned node if this node has it
+                        lists:foreach(fun (NodePid) ->
+                                              exit(NodePid, abort)
+                                      end,
+                                      PreChildren);
+                    true -> % this is == abort
+                        ok
+                 end,
                  % deallocate this temptable
                  ets:delete(Pre_TempTable),
                  ControlMessage = {control, From, Pid, SeqNum, ControlFun},
@@ -295,8 +304,8 @@ process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
                  ets:insert(TempTable, AllObj),
                  % perform the control msg
                  Children = ControlFun(RouterName, TempTable),
-                 % store the result, Temp routing and cur_seqNum
-                 Updated_TentativeResult = {Children, TempTable, Cur_SeqNum},
+                 % store the result, Temp routing and Previous_SeqNum(before recv any control msg)
+                 Updated_TentativeResult = {Children, TempTable, Previous_SeqNum},
                  % set current SeqNum to this SeqNum indicating I'm performing SeqNum : X 2PC
                  process(RouterName,
                          Table,
@@ -342,26 +351,27 @@ process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult) ->
                  % de-allocate the table
                  ets:delete(Table),
                  exit(stop)
-          end
+          end;
+     _other_message ->  process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult)
     end.
 
-ask_nodes_for_commit([], _RouterName) ->
+ask_nodes_for_commit([],_SeqNum ,_RouterName) ->
     true;
-ask_nodes_for_commit([FirstEntry | RestEntries], RouterName) ->
+ask_nodes_for_commit([FirstEntry | RestEntries],SeqNum, RouterName) ->
     {DestNodeName, RouteViaPid} = FirstEntry,
     % skip NoInEdge key
     if DestNodeName =/= '$NoInEdges' ->
            % ask node can you commit
-           RouteViaPid ! {can_you_commit, DestNodeName, self(), RouterName, [self()]},
+           RouteViaPid ! {can_you_commit,SeqNum, DestNodeName, self(), RouterName, [self()]},
            receive
              % node reply can Commit
              {i_can_commit, RouterName, _RouteFromPid, DestNodeName, _Deliver_List} ->
                  [NextEntry | OtherEntries] = RestEntries,
                  {NextDestNodeName, _NextRouteViaPid} = NextEntry,
                  if NextDestNodeName == '$NoInEdges' ->
-                        ask_nodes_for_commit(OtherEntries, RouterName);
+                        ask_nodes_for_commit(OtherEntries,SeqNum, RouterName);
                     true ->
-                        ask_nodes_for_commit(RestEntries, RouterName)
+                        ask_nodes_for_commit(RestEntries,SeqNum, RouterName)
                  end;
              % if root recv this -> abort
              {i_cannot_commit, RouterName, _FromPid, DestNodeName, _Trace} ->
@@ -370,7 +380,7 @@ ask_nodes_for_commit([FirstEntry | RestEntries], RouterName) ->
                        timeout
            end;
        true ->
-           ask_nodes_for_commit(RestEntries, RouterName)
+           ask_nodes_for_commit(RestEntries,SeqNum, RouterName)
     end.
 
 propagate_message([], Final_List, Message, _FromPid, _RootNodePid) ->
@@ -399,11 +409,5 @@ propagate_message([FirstEntry | RestEntries],
     end,
     propagate_message(RestEntries, New_List, Message, FromPid, RootNodePid).
 
-flush() ->
-    receive
-      _ ->
-          flush()
-      after 0 ->
-                ok
-    end.
+
 
