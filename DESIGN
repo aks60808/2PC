@@ -1,4 +1,161 @@
-Provide an exact description of the algorithm and protocol (including the format of the various messages and their semantics) used to implement two-phase commit.
-Provide an exact description of any extra messages you've introduced.
+
+COMP9243 Distributed System Assignment 2 
+written by z5219960 Lin, Heng-Chuan 6/11/2020
+
+Router.erl
+spawned node will be running on  
+    process(RouterName, Table, Cur_SeqNum, IsIn2PC, MsgQueue, TentativeResult)
+        parameters:
+            RouterName: Node Name specify by controller, pass-in by router:start().
+            Table: ets structure storing routing entries, pass-in by router:start().
+            Cur_SeqNum: Current Sequence number of operation,initialized with 0
+            IsIn2PC: boolean of status whether it's in 2PC or not,initialized with false.
+            MsgQueue: a list of queued message,initialized with [].
+            TentativeResult: initialized with {}, 
+                will have {return value from ControlFun, Temp Routing Table, previous SeqNum} in 2PC
+Helper Function in use:
+    - ask_nodes_for_commit([Entries],RouterName)
+        parameters:
+            Entries: [instance from Routing Table]
+            RouterName: NodeName passed-in by router:start()
+        Description:
+            Didn't have any special feature.
+            Just handling iteration of each entry by sending {can_you_commit} and then receive {i_can_commit}/{i_cannot_commit}
+            with 5 second timeout.
+            return 
+                timeout if timeout
+                abort if receive {i_cannot_commit}
+                true if receive reply {i_can_commit} from rest of nodes
+    - propagate_message([Entries],List, Message, FromPid, RootNodePid)
+        parameters:
+            Entries: [instance from Routing Table]
+            List: will contain PIDs of this node's outgoing edge
+            RouterName: NodeName pass-in by router:start()
+            FromPid: PID which send you this message
+            RootNodePid: PID of RootNode in this 2PC    
+        Description:
+            this helper function not only helps propagating message along node's outgoing edge but also 
+            has special feature for reduce the redundancy of message propagation
+            It would at some level avoid 
+                (1) if this node has the outgoing edge connected to the node who send you this message 
+                (2) propagate to RootNode if RootNode is known 
+                (this case won't happen in propagate {control} message since in my implement I didn't modified {control}
+                    message, it only happen in {doCommit} and {doAbort} since RootNode is known at that moment)
+            
+2PC protocol
+    Normal Case (just brief semantics, more detail in message section):
+        - RootNode 
+            1. propagate the received {control} message from controller.
+            2. after message propagation, RootNode will ask every node {can_you_commit} except itself for 
+                confirmation of first phase in 2PC sequentially.
+            3. RootNode will determine whether this SeqNum of control message can be committed or should
+                be abort by the replies from rest of nodes and further propagate either {doAbort} or {doCommit}. 
+            4. After completion of step 3, RootNode will also follow the result either DoCommit or DoAbort,
+                send either {abort} or {committed} to controller and finally clear propagated command from 
+                its mailbox for completion of 2PC.
+        - Other node
+            1. After receive propagated {control} message through its incoming edges,
+                Node will also propagate this {control} message through its incoming edges and
+                then operate the ControlFun.
+            2. [In 1st phase of 2PC] Nodes will receive the {can_you_commit} request as either
+                DestNode or just the Forwarder. Node will reply with its answer either {I_can_commit} or {I_cannot_commit}.
+            3. [In 1st phase of 2PC] Nodes will either receive the {I_can_commit} or {I_cannot_commit} request as a Forwarder.       
+                Node will forward this based on the Trace in message. Eventually, this message will arrive at RootNode's mailbox
+            4. [In 2nd phase of 2PC] Nodes will either receive the {DoAbort} or {DoCommit} from its incoming edges.
+                Node will execute as it's been told either abort or commit to next recursion of node process().
+    Message in use:
+        [control] from spec
+        - {control, From, Pid, SeqNum, ControlFun} has 3 derivation 
+            1. {control, From, Pid, SeqNum, ControlFun} when SeqNum == 0
+                For Initial control message 
+                    only configure its routing table and bring it into next recursion of node process().
+            2. {control, From, Pid, SeqNum, ControlFun} when Pid == From
+                For RootNode - will host the entire 2PC event thoroughly
+                    During the above procedure, 
+                    if any case of 
+                        (1) any other single node reply {I_cannot_commit}  
+                        (2) the RootNode doesn't receive the reply from the node which
+                            it asked for in 5 seconds i.e. - timeout
+                        (3) the return value from Control Function at RootNode's side is abort
+                        RootNode will propagate DoAbort command along its outgoing edges.
+                    Otherwise, 
+                        after receiving {I_can_commit} from every other nodes, RootNode will propagate
+                        DoCommit command along its outgoing edges.
+                    will clear propagated control message from mailbox in this stage                   
+            3. {control, From, Pid, SeqNum, ControlFun} 
+                For Rest of Nodes
+                    (1) operate the Control Function with a copy of its routing table
+                    (2) save the result of {return value from Control Function, tentative routing table, current SeqNum} 
+                    (3) bring the state of {Received SeqNum, IsIn2PC} and the result to first phase of 2PC
+        [1st phase] my implement
+        - {can_you_commit, DestNodeName, DeliverPid, RootNodeName, Trace} has 2 derivation
+            parameters:
+                DestNodeName: node which the message should be routed to
+                DeliverPid: node pid indicating which node send this to recipient
+                RootNodeName: name of RootNode
+                Trace: a list of PID regard to which nodes send this message
+                    e.g. if the sending order is RootNode(from)->yellow->green->red(Dest),
+                    then Trace will be [greenPID,yellowPID,RootNodePid] when red(Dest) receives this message.
+            1. {can_you_commit, DestNodeName, DeliverPid, RootNodeName, Trace} when DestNodeName == RouterName
+                For DestNode
+                    (1) In {can_you_commit} message, it will contain a list of PID sorted in 
+                        sending order
+                    (2) look at its return value from tentative result
+                        if it's abort -> send {I_cannot_commit} backward based on Trace
+                        if it's not abort -> send {I_can_commit} backward based on Trace
+            2. {can_you_commit, DestNodeName, DeliverPid, RootNodeName, Trace}
+                For Forwarder
+                    (1) lookup its routing table find out which node Pid is responsible for this message
+                    (2) forward the message with its own PID in Trace for further backward sending
+        - {i_can_commit, RootNodeName, DeliverPid, FromNodeName, Trace}
+            parameters:
+                RootNodeName: name of RootNode
+                DeliverPid: node pid indicating which node send this to recipient
+                FromNodeName: name of Node who create this message
+                Trace: a list of PID regard to which nodes send this message
+                    e.g. if the sending order is RootNode(from)->yellow->green->red(Dest),
+                    then Trace will be [greenPID,yellowPID,RootNodePid] when red(Dest) receives this message.
+            For Forwarder
+                (1) Nodes will look at the sending list extracting the next PID which node should forward to 
+                (2) forward this message.
+        - {i_cannot_commit, RootNodeName, DeliverPid, FromNodeName, Trace}
+            parameters:
+                RootNodeName: name of RootNode
+                DeliverPid: node pid indicating which node send this to recipient
+                FromNodeName: name of Node who create this message
+                Trace: a list of PID regard to which nodes send this message
+                    e.g. if the sending order is RootNode(from)->yellow->green->red(Dest),
+                    then Trace will be [greenPID,yellowPID,RootNodePid] when red(Dest) receives this message.
+            For Forwarder
+                (1) Nodes will look at the sending list extracting the next PID which node should forward to 
+                (2) forward this message.
+        [2nd phase] my implement
+        - {doCommit, SeqNum, FromPid, RootNodePid} 
+            parameters:
+                SeqNum: SeqNum based on Control message
+                FromPid: node pid indicating which node send this to recipient
+                RootNodePid: node pid of RootNode
+            For Nodes except RootNode
+                (1) propagate this command through Node's outgoing edges on current routing table
+                (2) extract the previous SeqNum and tentative routing table from tentative result
+                (3) overwritten the current routing table with this tentative table
+                (4) de-allocate the tentative routing table since it's no longer useful
+                (5) bring the status of {current SeqNum, NotIn2PC} and reconfigured routing table to complete the 2PC
+        - {doAbort, SeqNum, FromPid, RootNodePid}
+            For Nodes except RootNode
+                (1) propagate this command through Node's outgoing edges based on current routing table
+                (2) extract the return value ,previous SeqNum and tentative routing table from tentative result
+                (3) de-allocate the tentative routing table since it's no longer useful
+                (4) if return value is a list, terminate the node processes spawned by this node
+                (5) rollback the status of {previous SeqNum, NotIn2PC} and same routing table to complete the 2PC
+    Fault tolerance:
+        - Flush with the right time
+        - Queue all message including{message,dump,stop} During 2PC
+        - only process doAbort/doCommit command with right state 
+    Conflicting control request handling
+
+
+Control.erl
 Provide a description of how you implement the required functions (graphToNetwork and extendNetwork).
-Describe how you handle fault cases and conflicting control requests.
+
+            
