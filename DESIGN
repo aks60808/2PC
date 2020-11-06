@@ -220,8 +220,6 @@ Helper Function in use:
 
 
 Control.erl
-Provide a description of how you implement the required functions (graphToNetwork and extendNetwork).
-
 graphToNetwork(Graph) -> 
     Data structure in use:
         1. Node_Table - ets structure holding {NodeName,NodePid}
