@@ -159,6 +159,7 @@ Helper Function in use:
                         (2) keep receiving the latest duplicate propagated control after in 2PC
                 (2) Cur_SeqNum > Received SeqNum and also IsIn2PC == true 
                     Can solve:
+                        Conflicting control message when {control,2} is performed but receive also valid {control,1}
                         This is the case that will be elaborated in section of Conflicting control request handling.
                         I will talk about it later.
                 (3) Otherwise just consume this control message then get into next recursion with the same state
@@ -169,8 +170,10 @@ Helper Function in use:
                     keep receiving propagated doAbort/doCommit
             3. can_you_commit:
                 only reply this message when that node is in 2PC
+                will reply abort when Cur_SeqNum == SeqNum
                 Can solve :
                     falsely reply control message
+                    Conflicting control message
             4. I_can/cannot_commit:
                 only forward this message when RootNode is not equal RouterName.
                 Can solve:
